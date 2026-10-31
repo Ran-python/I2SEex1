@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import argparse
 from pathlib import Path
 import sys
@@ -25,6 +26,8 @@ def run_pipeline(
     verbose: bool = True,
 ) -> dict:
     """Execute the end-to-end NRRD -> Plane Projection -> MP4 pipeline."""
+    start_time = time.perf_counter()
+
     with PerformanceTimer("Load NRRD Volume") as load_timer:
         volume: Volume = NRRDLoader.load(nrrd_path)
 
@@ -35,8 +38,6 @@ def run_pipeline(
         raise ValueError(f"No valid plane definitions found in CSV file: {csv_path}")
 
     projector = PlaneProjector(backend="auto")
-    # Warmup JIT / cache prior to timing net projection throughput
-    projector.warmup(volume, planes[0])
 
     frames: List[np.ndarray] = []
     with PerformanceTimer("Project Planes") as proj_timer:
@@ -47,6 +48,8 @@ def run_pipeline(
     with PerformanceTimer("Encode MP4 Video") as video_timer:
         writer = VideoWriter(fps=fps)
         output_file = writer.write_video(mp4_path, frames)
+
+    end_time = time.perf_counter()
 
     net_fps = proj_timer.compute_fps(len(planes))
     avg_ms = proj_timer.elapsed_ms / len(planes)
@@ -63,6 +66,7 @@ def run_pipeline(
             f"Video: {video_timer.elapsed_ms:.2f} ms"
         )
         print(f"[Ex1 Output] Wrote {len(frames)} frames to {output_file}")
+        print(f"Runtime: {end_time - start_time:.4f} seconds")
 
     return {
         "volume_shape": volume.shape,

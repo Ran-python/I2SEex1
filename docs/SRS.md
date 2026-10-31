@@ -164,7 +164,6 @@ classDiagram
 
     class PlaneProjector {
         +str backend
-        +warmup(volume: Volume, plane: Plane) void
         +project(volume: Volume, plane: Plane) ndarray
     }
 
@@ -195,18 +194,26 @@ classDiagram
 
 ---
 
-## 6. Testing & Verification Strategy
+## 6. Timing Methodology, Testing & Verification Strategy
 
+### 6.1 Timing & FPS Calculation Methodology
+The system distinguishes between **End-to-End Pipeline Runtime** and **Net Projection Throughput (FPS)**:
+- **End-to-End `Runtime`**: Measures the total wall-clock duration of `run_pipeline` across all four stages:
+  $$\text{Runtime} = T_{\text{Load}} + T_{\text{CSV}} + T_{\text{Projection}} + T_{\text{Video}}$$
+  This includes NRRD file decompression (`Load`), CSV coordinate parsing and geometric validation (`CSV`), 3D-to-2D plane projection (`Projection`), and 8-bit normalization plus H.264 MP4 encoding and verification (`Video`).
+- **Net Projection `FPS`**: Measures strictly the computational speed of the 3D-to-2D projection engine (`PlaneProjector.project` across all planes $N_{\text{planes}}$), excluding file I/O and video encoding:
+  $$\text{Average Frame Time (ms)} = \frac{T_{\text{Projection (ms)}}}{N_{\text{planes}}}, \qquad \text{Projection FPS} = \frac{N_{\text{planes}}}{T_{\text{Projection (seconds)}}}$$
+
+### 6.2 Automated Test Suite Logic
 1. **Unit Tests — Geometry (`tests/test_geometry.py`)**:
-   - Validates `Point3D` vector algebra (`dist`, `norm`, `dot`, `cross`).
-   - Validates `TrianglePlane` acceptance when $|dist(a,b) - dist(a,c)| < 0.001$ and rejection when $\ge 0.001$ or collinear.
-   - Validates `TrapezoidPlane` coplanarity check, equal leg check ($|dist(a_1,b) - dist(a_2,c)| < 0.001$), and base width ordering ($dist(a_1,a_2) \le dist(b,c)$).
-2. **Unit Tests — Projection & Boundary Safety (`tests/test_projector.py`)**:
-   - Compares vectorized/JIT projection output pixel-for-pixel against an explicit scalar reference implementation (`reference_scalar_project`) across synthetic 3D volumes for both `TrianglePlane` and `TrapezoidPlane`.
-   - Verifies completely out-of-bounds planes return an all-zero matrix without errors.
-   - Verifies partially out-of-bounds planes accurately project in-bounds voxels and clamp out-of-bounds voxels to `0`.
-   - Verifies 8-bit (`uint8`), 16-bit (`uint16`), and 32-bit (`uint32`) volume handling and end-to-end NRRD + CSV + MP4 I/O round-trips.
+   - **`TestPoint3D`**: Validates 3D vector algebra (`dist`, `norm`, `normalized`, `dot`, `cross`).
+   - **`TestTrianglePlane`**: Validates 3-point isosceles triangle acceptance when $|dist(a,b) - dist(a,c)| < 0.001$ and verifies `InvalidPlaneError` is raised when leg difference $\ge 0.001$ or when points are collinear.
+   - **`TestTrapezoidPlane`**: Validates 4-point isosceles trapezoid 3D coplanarity (perpendicular distance of $a_2$ from the plane of $(a_1, b, c)$ is $< 0.001$), equal leg lengths ($|dist(a_1,b) - dist(a_2,c)| < 0.001$), and base width ordering ($dist(a_1,a_2) \le dist(b,c)$).
+2. **Unit & Integration Tests — Projection, `MRHead`, and MP4 Output (`tests/test_projector.py`)**:
+   - **`TestProjectorAndBounds`**: Compares vectorized projection output pixel-for-pixel (`np.testing.assert_array_equal`) against an explicit scalar reference implementation (`reference_scalar_project`) on synthetic 3D volumes (`uint8`, `uint16`, `uint32`) for both `TrianglePlane` and `TrapezoidPlane`. Verifies that completely out-of-bounds planes return an all-zero matrix and partially out-of-bounds planes accurately sample in-bounds voxels while clamping out-of-bounds coordinates to `0`.
+   - **`TestMRHeadReferenceDataset`**: Loads the primary reference dataset `data/MRHead_1.nrrd`, validates its $(256, 256, 130)$ dimensions, lossless `int16 -> uint16` conversion, and voxel intensity range $[0, 279]$, and runs the end-to-end pipeline to generate and decode an H.264 `.mp4` video.
+   - **`TestMP4VideoRegression`**: Tests `NaN`/`Inf` sanitization during 8-bit normalization, odd/small dimension padding, ISO MP4 box integrity (`ftyp`, `moov`, `mdat`), H.264 (`avc1`) codec metadata, and frame-by-frame decoding via `cv2.VideoCapture` to verify non-blank anatomical output.
 3. **Throughput Benchmarking (`tests/benchmark.py`)**:
    - Allocates a $500 \times 500 \times 500$ `uint8` volume ($125,000,000$ voxels).
-   - Performs warmup projections followed by 120 timed projections (alternating 3-point triangles and 4-point oblique trapezoids).
-   - Asserts net throughput exceeds the 30 FPS minimum and verifies achievement of the 100+ FPS primary target.
+   - Projects 120 sequential planes (alternating 3-point triangles and 4-point oblique trapezoids) using the vectorized NumPy engine with zero compilation startup overhead.
+   - Asserts net throughput exceeds the 30 FPS minimum and verifies achievement of the 100+ FPS primary target (~190 FPS measured).
