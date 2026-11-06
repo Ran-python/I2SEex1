@@ -193,5 +193,6 @@ The benchmark evaluates 120 planar slices (60 `TrianglePlane` slices and 60 obli
   - [`data/sample_planes_4.csv`](file:///c:/projects/OOP_projects/Ex1/data/sample_planes_4.csv): 240 oblique trapezoid planes.
 - **Bundled Demo Output Video**:
   - **Location**: [`data/demo_output.mp4`](file:///c:/projects/OOP_projects/Ex1/data/demo_output.mp4)
+  - **Note**: The CSV used in demo is sample_planes_3.CSV loacted at Data in directory.
   - **Specifications**: H.264 / AVC (`avc1`, Constrained Baseline `yuv420p`), resolution $224 \times 250$, $30.0\text{ FPS}$ ($360\text{ frames}$, $12.0\text{ seconds}$, $2.54\text{ MB}$).
 - **Sample 100-Plane Run**: Running `python Ex0.py data/MRHead_1.nrrd data/sample_planes_2.csv data/demo_output.mp4` loads the volume in $266.92\text{ ms}$, parses 100 planes in $2.17\text{ ms}$, projects all 100 frames in **$108.78\text{ ms}$ ($1.09\text{ ms/frame}$, $919.2\text{ FPS}$)**, and encodes `data/demo_output.mp4` in $634.02\text{ ms}$ for a total end-to-end runtime of **$1.0119\text{ seconds}$**.
