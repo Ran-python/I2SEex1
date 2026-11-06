@@ -9,7 +9,7 @@ import numpy as np
 
 from src.core.projector import HAS_NUMBA, PlaneProjector
 from src.core.volume import Volume
-from src.geometry.plane import Plane, TrapezoidPlane, TrianglePlane
+from src.geometry.plane import InvalidPlaneError, Plane, TrapezoidPlane, TrianglePlane
 from src.geometry.point import Point3D
 from src.io.csv_parser import CSVPlaneParser
 from src.io.nrrd_loader import DEFAULT_MRHEAD_PATH, NRRDLoader
@@ -120,6 +120,21 @@ class TestProjectorAndBounds(unittest.TestCase):
             self.assertEqual(res.dtype, dtype)
             self.assertEqual(int(np.max(res)), 42)
 
+    def test_volume_dimension_and_dtype_constraints(self) -> None:
+        # Minimum valid volume 1x1x1 and maximum valid dimension 1023 (< 2^10)
+        min_vol = Volume(np.ones((1, 1, 1), dtype=np.uint8))
+        self.assertEqual(min_vol.shape, (1, 1, 1))
+        max_dim_vol = Volume(np.zeros((1023, 1, 1), dtype=np.uint8))
+        self.assertEqual(max_dim_vol.sx, 1023)
+
+        # Dimension >= 1024 (2^10) must raise ValueError
+        with self.assertRaises(ValueError):
+            Volume(np.zeros((1024, 1, 1), dtype=np.uint8))
+
+        # Unsupported signed/float dtypes must raise TypeError
+        with self.assertRaises(TypeError):
+            Volume(np.zeros((8, 8, 8), dtype=np.float32))
+
 
 class TestIOPipeline(unittest.TestCase):
     """Tests for NRRDLoader, CSVPlaneParser, and VideoWriter."""
@@ -170,6 +185,43 @@ class TestIOPipeline(unittest.TestCase):
             if HAS_CV2:
                 self.assertTrue(info["is_decodable"])
                 self.assertEqual(info["frame_count"], 2)
+
+    def test_csv_parser_rejects_malformed_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            bad_count_csv = Path(tmp_dir) / "bad_count.csv"
+            bad_count_csv.write_text("1,2,3,4,5\n", encoding="utf-8")
+            with self.assertRaises(InvalidPlaneError):
+                CSVPlaneParser.parse(bad_count_csv)
+
+            bad_float_csv = Path(tmp_dir) / "bad_float.csv"
+            bad_float_csv.write_text(
+                "50,0,10,20,40,10,80,40,10\n1,2,abc,4,5,6,7,8,9\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(ValueError):
+                CSVPlaneParser.parse(bad_float_csv)
+
+    def test_bundled_csv_files_and_demo_video_exist_and_validate(self) -> None:
+        for csv_name in (
+            "sample_planes.csv",
+            "sample_planes_2.csv",
+            "sample_planes_3.csv",
+            "sample_planes_4.csv",
+        ):
+            csv_path = Path("data") / csv_name
+            if csv_path.is_file():
+                planes = CSVPlaneParser.parse(csv_path)
+                self.assertGreater(len(planes), 0)
+
+        demo_mp4 = Path("data/demo_output.mp4")
+        if demo_mp4.is_file():
+            info = VideoWriter.inspect_video(demo_mp4)
+            self.assertTrue(info["has_ftyp"])
+            self.assertTrue(info["has_moov"])
+            self.assertTrue(info["has_mdat"])
+            if HAS_CV2:
+                self.assertTrue(info["is_decodable"])
+                self.assertGreater(info["frame_count"], 0)
 
 
 class TestMRHeadReferenceDataset(unittest.TestCase):

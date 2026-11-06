@@ -39,10 +39,13 @@ Given a 3D raster matrix $M$ of dimensions $s_x \times s_y \times s_z$ (where $1
 
 ```text
 project_root/
-├── data/                    # Reference .nrrd volume and .csv plane lists
+├── data/                    # Reference .nrrd volume, .csv plane sets, and demo .mp4 output
 │   ├── MRHead_1.nrrd        # Primary 256x256x130 3D Slicer MRI reference dataset
-│   ├── sample_planes.csv    # 30 valid 3-point (triangle) and 4-point (trapezoid) planes
-│   └── sample_planes_2.csv  # Extended plane set testing coronal, axial, and 3D oblique slices
+│   ├── sample_planes.csv    # 30 planes (15 triangles, 15 trapezoids)
+│   ├── sample_planes_2.csv  # 100 planes (45 triangles, 55 trapezoids)
+│   ├── sample_planes_3.csv  # 360 planes (120 triangles, 240 trapezoids)
+│   ├── sample_planes_4.csv  # 240 planes (240 oblique trapezoids)
+│   └── demo_output.mp4      # Generated H.264 MP4 output video from the demo experiment
 ├── docs/                    # Documentation & Software Requirements Specification
 │   └── SRS.md             # Formal SRS, class diagram, and verification strategy
 ├── src/                   # Core source code and components
@@ -132,16 +135,17 @@ python tests/benchmark.py
 ```
 
 ### Test Suite Logic & Verification Architecture
-The automated test suite (23 unit and integration tests) validates every layer of the system:
+The automated test suite (28 unit and integration tests) validates every layer of the system:
 
 1. **Geometric Validation Logic ([`tests/test_geometry.py`](file:///c:/projects/OOP_projects/Ex1/tests/test_geometry.py))**:
-   - **`TestPoint3D`**: Verifies 3D vector subtraction, Euclidean distance (`dist`), vector normalization, dot products, and cross products.
+   - **`TestPoint3D`**: Verifies 3D vector subtraction, Euclidean distance (`dist`), vector normalization, dot products, cross products, sequence construction, and zero-division protection.
    - **`TestTrianglePlane`**: Verifies that 3-point planes $(a, b, c)$ pass when $|dist(a,b) - dist(a,c)| < \text{EPS}$ ($\text{EPS} = 0.001$), and confirms `InvalidPlaneError` is raised when leg lengths differ by $\ge 0.001$ or when points are collinear ($\|(b-a) \times (c-a)\| \le \text{EPS}$).
-   - **`TestTrapezoidPlane`**: Verifies 4-point planes $(a_1, a_2, b, c)$ for 3D coplanarity (perpendicular distance of $a_2$ from the plane of $(a_1, b, c)$ is $< \text{EPS}$), equal leg lengths ($|dist(a_1,b) - dist(a_2,c)| < \text{EPS}$), and width ordering ($dist(a_1,a_2) \le dist(b,c)$).
+   - **`TestTrapezoidPlane`**: Verifies 4-point planes $(a_1, a_2, b, c)$ for 3D coplanarity (perpendicular distance of $a_2$ from the plane of $(a_1, b, c)$ is $< \text{EPS}$), equal leg lengths ($|dist(a_1,b) - dist(a_2,c)| < \text{EPS}$), width ordering ($dist(a_1,a_2) \le dist(b,c)$), and invalid coordinate count rejection.
 
 2. **Projection Mathematical Equivalence & Boundary Logic ([`tests/test_projector.py`](file:///c:/projects/OOP_projects/Ex1/tests/test_projector.py))**:
    - **Scalar Reference Oracle (`reference_scalar_project`)**: Implements the exact point-by-point mathematical specification from Section 1 using explicit scalar loops as a ground-truth oracle.
-   - **`TestProjectorAndBounds`**: Compares the vectorized `PlaneProjector` output against `reference_scalar_project` using `np.testing.assert_array_equal` (100% pixel-for-pixel equality) on both `TrianglePlane` and `TrapezoidPlane`. Tests planes completely outside the 3D volume (verifying an all-zero matrix is returned without crashing) and planes partially straddling volume borders (verifying in-bounds voxels are sampled and out-of-bounds coordinates clamp cleanly to `0`).
+   - **`TestProjectorAndBounds`**: Compares the vectorized `PlaneProjector` output against `reference_scalar_project` using `np.testing.assert_array_equal` (100% pixel-for-pixel equality) on both `TrianglePlane` and `TrapezoidPlane`. Tests planes completely outside the 3D volume (verifying an all-zero matrix is returned without crashing), planes partially straddling volume borders (verifying in-bounds voxels are sampled and out-of-bounds coordinates clamp cleanly to `0`), and `Volume` dimension bounds ($1 \le s_x, s_y, s_z < 2^{10}$).
+   - **`TestIOPipeline`**: Verifies `.nrrd` read/write round-trips, `.csv` parsing and malformed row rejection, all bundled `.csv` plane files in `data/`, and the bundled demo video `data/demo_output.mp4`.
    - **`TestMRHeadReferenceDataset`**: Loads `data/MRHead_1.nrrd`, verifies its $(256, 256, 130)$ dimensions, lossless `int16 -> uint16` conversion, and intensity range $[0, 279]$, and runs the full end-to-end pipeline to `.mp4`.
    - **`TestMP4VideoRegression`**: Verifies `NaN`/`Inf` sanitization during 8-bit normalization, odd/small frame dimension padding, ISO MP4 container atoms (`ftyp`, `moov`, `mdat`), H.264 (`avc1`) stream headers, and frame-by-frame decoding via `cv2.VideoCapture` to ensure frames are non-blank and preserve anatomical contrast.
 
@@ -181,7 +185,13 @@ The benchmark evaluates 120 planar slices (60 `TrianglePlane` slices and 60 obli
 | **Average Time per Frame** | **$5.25\text{ ms / frame}$** | $< 10.0\text{ ms / frame}$ | **PASSED** |
 | **Net Projection FPS** | **$190.50\text{ FPS}$** | Minimum $\ge 30\text{ FPS}$, Target $\ge 100\text{ FPS}$ | **PASSED (190+ FPS)** |
 
-### 6.4 Demo Experiment (`data/MRHead_1.nrrd` & `data/sample_planes_2.csv`)
-- **Dataset**: The 3D Slicer `MRHead` dataset (`data/MRHead_1.nrrd`), a $256 \times 256 \times 130$ T1 MRI scan stored as gzip-compressed 16-bit integer voxels (`min=0, max=279`, converted losslessly to `uint16`).
-- **Trajectory**: `data/sample_planes.csv` and `data/sample_planes_2.csv` define sequential 3-point (`TrianglePlane`) and 4-point (`TrapezoidPlane`) slices sweeping across sagittal, coronal, axial, and 3D oblique orientations.
-- **Experimental Result**: Running `python Ex0.py data/MRHead_1.nrrd data/sample_planes_2.csv data/demo_output.mp4` loads the volume in $266.92\text{ ms}$, parses 100 planes in $2.17\text{ ms}$, projects all 100 frames in **$108.78\text{ ms}$ ($1.09\text{ ms/frame}$, $919.2\text{ FPS}$)**, and encodes `data/demo_output.mp4` in $634.02\text{ ms}$ for a total end-to-end runtime of **$1.0119\text{ seconds}$**.
+### 6.4 Demo Experiment & Output Video Location (`data/demo_output.mp4`)
+- **Dataset**: The 3D Slicer `MRHead` dataset ([`data/MRHead_1.nrrd`](file:///c:/projects/OOP_projects/Ex1/data/MRHead_1.nrrd)), a $256 \times 256 \times 130$ T1 MRI scan stored as gzip-compressed 16-bit integer voxels (`min=0, max=279`, converted losslessly to `uint16`).
+- **Plane Trajectories**: Four CSV plane sets are provided in [`data/`](file:///c:/projects/OOP_projects/Ex1/data):
+  - [`data/sample_planes.csv`](file:///c:/projects/OOP_projects/Ex1/data/sample_planes.csv): 30 planes (15 triangles, 15 trapezoids).
+  - [`data/sample_planes_3.csv`](file:///c:/projects/OOP_projects/Ex1/data/sample_planes_3.csv): 360 planes (120 triangles, 240 trapezoids) for a 12-second multi-axis anatomical sweep.
+  - [`data/sample_planes_4.csv`](file:///c:/projects/OOP_projects/Ex1/data/sample_planes_4.csv): 240 oblique trapezoid planes.
+- **Bundled Demo Output Video**:
+  - **Location**: [`data/demo_output.mp4`](file:///c:/projects/OOP_projects/Ex1/data/demo_output.mp4)
+  - **Specifications**: H.264 / AVC (`avc1`, Constrained Baseline `yuv420p`), resolution $224 \times 250$, $30.0\text{ FPS}$ ($360\text{ frames}$, $12.0\text{ seconds}$, $2.54\text{ MB}$).
+- **Sample 100-Plane Run**: Running `python Ex0.py data/MRHead_1.nrrd data/sample_planes_2.csv data/demo_output.mp4` loads the volume in $266.92\text{ ms}$, parses 100 planes in $2.17\text{ ms}$, projects all 100 frames in **$108.78\text{ ms}$ ($1.09\text{ ms/frame}$, $919.2\text{ FPS}$)**, and encodes `data/demo_output.mp4` in $634.02\text{ ms}$ for a total end-to-end runtime of **$1.0119\text{ seconds}$**.

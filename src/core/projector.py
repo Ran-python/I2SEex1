@@ -13,81 +13,78 @@ HAS_NUMBA: bool = importlib.util.find_spec("numba") is not None
 _NUMBA_KERNEL = None
 
 
-def _project_numba_impl(
-    vol_data: np.ndarray,
-    a1_x: float,
-    a1_y: float,
-    a1_z: float,
-    a2_x: float,
-    a2_y: float,
-    a2_z: float,
-    v_ab_x: float,
-    v_ab_y: float,
-    v_ab_z: float,
-    v_ac_x: float,
-    v_ac_y: float,
-    v_ac_z: float,
-    d_ab: float,
-    d_bc: float,
-) -> np.ndarray:
-    """Numba parallel JIT implementation of the exact reference plane projection algorithm."""
-    from numba import prange  # type: ignore[import-not-found]
-
-    height = int(d_ab)
-    width = int(d_bc)
-    sx, sy, sz = vol_data.shape
-    out = np.zeros((height, width), dtype=vol_data.dtype)
-    half_dbc = 0.5 * d_bc
-
-    for y in prange(height):
-        yf = float(y)
-        p1_x = a1_x + yf * v_ab_x
-        p1_y = a1_y + yf * v_ab_y
-        p1_z = a1_z + yf * v_ab_z
-
-        p2_x = a2_x + yf * v_ac_x
-        p2_y = a2_y + yf * v_ac_y
-        p2_z = a2_z + yf * v_ac_z
-
-        dx = p2_x - p1_x
-        dy = p2_y - p1_y
-        dz = p2_z - p1_z
-        d12 = math.sqrt(dx * dx + dy * dy + dz * dz)
-
-        if d12 > 0.0:
-            inv_d12 = 1.0 / d12
-            dp_x = dx * inv_d12
-            dp_y = dy * inv_d12
-            dp_z = dz * inv_d12
-        else:
-            dp_x = 0.0
-            dp_y = 0.0
-            dp_z = 0.0
-
-        max_x1 = int(d12)
-        base_x_offset = half_dbc - 0.5 * d12
-
-        for x1 in range(max_x1 + 1):
-            x = int(base_x_offset + x1)
-            if 0 <= x < width:
-                x1f = float(x1)
-                px = p1_x + x1f * dp_x
-                py = p1_y + x1f * dp_y
-                pz = p1_z + x1f * dp_z
-
-                if 0.0 <= px < sx and 0.0 <= py < sy and 0.0 <= pz < sz:
-                    out[y, x] = vol_data[int(px), int(py), int(pz)]
-
-    return out
-
-
 def _get_numba_kernel():
     """Lazily compile and return the Numba JIT kernel only when backend='numba' is used."""
     global _NUMBA_KERNEL
     if _NUMBA_KERNEL is None:
-        from numba import njit  # type: ignore[import-not-found]
+        from numba import njit, prange  # type: ignore[import-not-found]
 
-        _NUMBA_KERNEL = njit(parallel=True, fastmath=True, cache=True)(_project_numba_impl)
+        @njit(parallel=True, fastmath=True, cache=True)
+        def _project_numba_kernel(
+            vol_data: np.ndarray,
+            a1_x: float,
+            a1_y: float,
+            a1_z: float,
+            a2_x: float,
+            a2_y: float,
+            a2_z: float,
+            v_ab_x: float,
+            v_ab_y: float,
+            v_ab_z: float,
+            v_ac_x: float,
+            v_ac_y: float,
+            v_ac_z: float,
+            d_ab: float,
+            d_bc: float,
+        ) -> np.ndarray:
+            height = int(d_ab)
+            width = int(d_bc)
+            sx, sy, sz = vol_data.shape
+            out = np.zeros((height, width), dtype=vol_data.dtype)
+            half_dbc = 0.5 * d_bc
+
+            for y in prange(height):
+                yf = float(y)
+                p1_x = a1_x + yf * v_ab_x
+                p1_y = a1_y + yf * v_ab_y
+                p1_z = a1_z + yf * v_ab_z
+
+                p2_x = a2_x + yf * v_ac_x
+                p2_y = a2_y + yf * v_ac_y
+                p2_z = a2_z + yf * v_ac_z
+
+                dx = p2_x - p1_x
+                dy = p2_y - p1_y
+                dz = p2_z - p1_z
+                d12 = math.sqrt(dx * dx + dy * dy + dz * dz)
+
+                if d12 > 0.0:
+                    inv_d12 = 1.0 / d12
+                    dp_x = dx * inv_d12
+                    dp_y = dy * inv_d12
+                    dp_z = dz * inv_d12
+                else:
+                    dp_x = 0.0
+                    dp_y = 0.0
+                    dp_z = 0.0
+
+                max_x1 = int(d12)
+                base_x_offset = half_dbc - 0.5 * d12
+
+                for x1 in range(max_x1 + 1):
+                    x = int(base_x_offset + x1)
+                    if 0 <= x < width:
+                        x1f = float(x1)
+                        px = p1_x + x1f * dp_x
+                        py = p1_y + x1f * dp_y
+                        pz = p1_z + x1f * dp_z
+
+                        if 0.0 <= px < sx and 0.0 <= py < sy and 0.0 <= pz < sz:
+                            out[y, x] = vol_data[int(px), int(py), int(pz)]
+
+            return out
+
+        _NUMBA_KERNEL = _project_numba_kernel
     return _NUMBA_KERNEL
 
 

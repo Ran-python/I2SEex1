@@ -39,6 +39,15 @@ class TestPoint3D(unittest.TestCase):
         self.assertEqual(vz, Point3D(0.0, 0.0, 1.0))
         self.assertAlmostEqual(vx.dot(vy), 0.0, places=7)
 
+    def test_from_sequence_and_zero_division_safety(self) -> None:
+        p = Point3D.from_sequence([3.0, 4.0, 12.0])
+        self.assertAlmostEqual(p.norm(), 13.0, places=7)
+        self.assertEqual(Point3D(0.0, 0.0, 0.0).normalized(), Point3D(0.0, 0.0, 0.0))
+        with self.assertRaises(ValueError):
+            Point3D.from_sequence([1.0, 2.0])
+        with self.assertRaises(ZeroDivisionError):
+            _ = p / 0.0
+
 
 class TestTrianglePlane(unittest.TestCase):
     """Tests for 3-point Isosceles Triangle Plane validation."""
@@ -123,6 +132,19 @@ class TestTrapezoidPlane(unittest.TestCase):
         self.assertIsInstance(tri, TrianglePlane)
         trap = Plane.from_coordinates([30, 10, 25, 70, 10, 25, 10, 50, 25, 90, 50, 25])
         self.assertIsInstance(trap, TrapezoidPlane)
+
+    def test_trapezoid_within_epsilon_and_invalid_coord_counts(self) -> None:
+        a1 = Point3D(30.0, 10.0, 25.0)
+        a2 = Point3D(70.0, 10.0, 25.0)
+        b = Point3D(10.0, 50.0, 25.0)
+        c = Point3D(90.0, 50.0004, 25.0)  # Leg diff < EPS (0.001)
+        trap = TrapezoidPlane(a1, a2, b, c)
+        self.assertIsInstance(trap, TrapezoidPlane)
+
+        with self.assertRaises(InvalidPlaneError):
+            Plane.from_coordinates([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        with self.assertRaises(InvalidPlaneError):
+            Plane.from_points([a1, a2])
 
 
 if __name__ == "__main__":
